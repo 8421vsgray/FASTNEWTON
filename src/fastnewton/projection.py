@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from ._stride_projection import EuclideanProjector
+from .diagnostics import primal_dual_certificate
 
 
 class ProjectionFailure(RuntimeError):
@@ -42,6 +43,9 @@ def project(
     if not isinstance(relative_tol, (int, float)) or relative_tol <= 0:
         raise ValueError("relative_tol must be positive")
 
+    certificate_tolerance = float(solver_options.pop("certificate_tolerance", 1.0e-6))
+    if certificate_tolerance <= 0:
+        raise ValueError("certificate_tolerance must be positive")
     n = matrix.shape[0]
     transport, info = EuclideanProjector.project(
         matrix,
@@ -53,15 +57,19 @@ def project(
     info = dict(info)
     solver = info.get("solver")
     failed = solver == "projection_failure"
+    certificate = primal_dual_certificate(
+        matrix, transport, info.get("dual_state"), tolerance=certificate_tolerance
+    )
     info.update(
         {
             "status": "failed" if failed else "solved",
             "success": not failed,
             "feasibility_verified": not failed,
-            "optimality_status": "unverified",
+            "optimality_status": certificate["certificate_status"],
             "autograd_supported": False,
         }
     )
+    info.update(certificate)
     if failed and raise_on_failure:
         raise ProjectionFailure(
             "FASTNEWTON baseline returned projection_failure; uniform output "

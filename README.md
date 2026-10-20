@@ -56,6 +56,12 @@ The independent `kkt_diagnostics` helper reports feasibility and a conservative
 dual KKT reconstruction. Disconnected active supports may remain
 `unverified`, even when the primal solution agrees with CVXPY.
 
+`primal_dual_certificate` uses the solver's dual potentials directly and does
+not assume that the positive-support graph is connected. It verifies primal
+feasibility, `T = [X-u-v]_+`, and the primal--dual gap. The public `info`
+dictionary reports `optimality_status="verified"` only when this certificate
+passes.
+
 The synthetic CUDA benchmark can be reproduced with:
 
 ```bash
@@ -66,6 +72,15 @@ PYTHONPATH=src:. python -m benchmarks.benchmark_gw_like \
 No real STRIDE checkpoint is bundled in this repository. Real candidate
 capture is therefore a separate data-ingestion step and is not silently
 replaced by synthetic data.
+
+The reproducible B=512 CVXPY artifact can be regenerated with:
+
+```bash
+PYTHONPATH=src:. python -m benchmarks.run_b512_reference
+```
+
+It writes metadata to `experiments/b512_cvxpy_mr05_20261020.json` and keeps the
+large tensor bundle in the same directory as a Git-ignored `.pt` file.
 
 ## Provenance
 

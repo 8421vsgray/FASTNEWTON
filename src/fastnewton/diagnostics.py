@@ -62,3 +62,85 @@ def kkt_diagnostics(matrix: torch.Tensor, transport: torch.Tensor, *, active_tol
         "kkt_verified": kkt_verified,
         "status": "verified" if kkt_verified else "unverified",
     }
+
+
+@torch.no_grad()
+def primal_dual_certificate(
+    matrix: torch.Tensor,
+    transport: torch.Tensor,
+    dual_state,
+    *,
+    tolerance: float = 1.0e-6,
+):
+    """Compute a primal--dual gap certificate without support connectivity.
+
+    For dual potentials ``u, v``, the dual lower bound is
+
+    ``0.5*||X||^2 - 0.5*||[X-u-v]_+||^2 - m*(sum(u)+sum(v))``.
+
+    The certificate is valid only when the returned transport is primal
+    feasible and agrees with the positive-part dual minimizer. No graph
+    decomposition or single-component gauge assumption is used.
+    """
+    if matrix.shape != transport.shape or matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("matrix and transport must be square tensors of equal shape")
+    n = matrix.shape[0]
+    target = matrix.new_tensor(1.0 / float(n))
+    result = {
+        "certificate_status": "unavailable",
+        "certificate_verified": False,
+        "primal_objective": float("nan"),
+        "dual_lower_bound": float("nan"),
+        "primal_dual_gap": float("nan"),
+        "relative_primal_dual_gap": float("nan"),
+        "dual_projection_residual": float("inf"),
+        "certificate_row_residual": float((transport.sum(1) - target).abs().amax().cpu()),
+        "certificate_col_residual": float((transport.sum(0) - target).abs().amax().cpu()),
+        "certificate_min_transport": float(transport.amin().cpu()),
+    }
+    if not isinstance(dual_state, (tuple, list)) or len(dual_state) != 2:
+        return result
+    u, v = dual_state
+    if tuple(u.shape) != (n,) or tuple(v.shape) != (n,) or u.device != matrix.device or v.device != matrix.device:
+        return result
+    if not bool(torch.isfinite(u).all() and torch.isfinite(v).all()):
+        return result
+    u = u.to(dtype=matrix.dtype)
+    v = v.to(dtype=matrix.dtype)
+    dual_transport = (matrix - u[:, None] - v[None, :]).clamp_min(0.0)
+    primal_objective = 0.5 * (transport - matrix).square().sum()
+    dual_lower_bound = (
+        0.5 * matrix.square().sum()
+        - 0.5 * dual_transport.square().sum()
+        - target * (u.sum() + v.sum())
+    )
+    gap = primal_objective - dual_lower_bound
+    primal_feasible = bool(
+        result["certificate_row_residual"] <= tolerance
+        and result["certificate_col_residual"] <= tolerance
+        and result["certificate_min_transport"] >= -tolerance
+    )
+    dual_projection_residual = (transport - dual_transport).abs().amax()
+    gap_value = float(gap.cpu())
+    result.update(
+        {
+            "certificate_status": "verified"
+            if primal_feasible
+            and float(dual_projection_residual.cpu()) <= tolerance
+            and gap_value <= tolerance
+            and gap_value >= -10.0 * tolerance
+            else "unverified",
+            "certificate_verified": bool(
+                primal_feasible
+                and float(dual_projection_residual.cpu()) <= tolerance
+                and gap_value <= tolerance
+                and gap_value >= -10.0 * tolerance
+            ),
+            "primal_objective": float(primal_objective.cpu()),
+            "dual_lower_bound": float(dual_lower_bound.cpu()),
+            "primal_dual_gap": gap_value,
+            "relative_primal_dual_gap": gap_value / max(abs(float(primal_objective.cpu())), 1.0e-12),
+            "dual_projection_residual": float(dual_projection_residual.cpu()),
+        }
+    )
+    return result
