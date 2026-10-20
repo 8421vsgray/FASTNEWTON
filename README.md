@@ -43,8 +43,29 @@ python -m unittest discover -s tests -v
 ```
 
 The current tests cover the B=2 closed form, invalid inputs, failure-state
-semantics, and small-matrix feasibility. Optimality certificates and GPU
-benchmarks are not yet implemented.
+semantics, small-matrix feasibility, and CVXPY/OSQP comparisons on random and
+synthetic GW-like candidates for B=2, 4, 8, 16, and 32. The CVXPY reference is
+optional and is not a runtime dependency of FASTNEWTON.
+
+Synthetic candidates follow the pinned STRIDE model exactly for symmetric
+distance matrices:
+
+`X = T + 4 * step_size * D_source @ T @ D_target`
+
+The independent `kkt_diagnostics` helper reports feasibility and a conservative
+dual KKT reconstruction. Disconnected active supports may remain
+`unverified`, even when the primal solution agrees with CVXPY.
+
+The synthetic CUDA benchmark can be reproduced with:
+
+```bash
+PYTHONPATH=src:. python -m benchmarks.benchmark_gw_like \
+  --B 512 --dim 64 --warmups 2 --repeats 5
+```
+
+No real STRIDE checkpoint is bundled in this repository. Real candidate
+capture is therefore a separate data-ingestion step and is not silently
+replaced by synthetic data.
 
 ## Provenance
 
