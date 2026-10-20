@@ -39,7 +39,7 @@ API raises `ProjectionFailure`.
 ## Verification
 
 ```bash
-python -m pytest -q
+python -m unittest discover -s tests -v
 ```
 
 The current tests cover the B=2 closed form, invalid inputs, failure-state
