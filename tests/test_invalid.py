@@ -8,6 +8,7 @@ class InvalidInputTests(unittest.TestCase):
     def test_invalid_matrix(self):
         cases = (
             (torch.ones(2, 3), ValueError, {}),
+            (torch.empty(0, 0), ValueError, {}),
             (torch.ones(2, 2, dtype=torch.int64), TypeError, {}),
             (torch.tensor([[0.0, float("nan")], [0.0, 0.0]]), ValueError, {}),
             (torch.ones(2, 2), ValueError, {"max_iter": 0}),

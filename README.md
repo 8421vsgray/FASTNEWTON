@@ -31,10 +31,20 @@ The input is not modified. The output stays on the input device. CPU and CUDA
 are supported when the installed PyTorch build supports them. Autograd is not
 supported in this first extraction (`info["autograd_supported"]` is false).
 
-`projection_failure` is never reported as success. With `return_info=True`, a
-failure returns the baseline defensive uniform tensor together with
-`status="failed"` and `success=False`; without `return_info=True`, the public
-API raises `ProjectionFailure`.
+The public status has three values: `verified` means feasibility and the
+primal--dual certificate both passed, `feasible_only` means the returned plan
+is feasible but an optimality certificate is unavailable or did not pass, and
+`failed` means the result must not be used as a projection. `success=True`
+means that a usable feasible plan was returned; callers that require a
+certified Euclidean projection must also require `status == "verified"` (or
+`optimality_verified`). With `return_info=True`, a failure returns the
+baseline defensive uniform tensor together with `status="failed"` and
+`success=False`; without `return_info=True`, the public API raises
+`ProjectionFailure`.
+
+The optional `sparse_schur=True` path is explicitly reported as
+`solver_path="experimental_sparse_schur"`; it remains subject to the same
+post-solve feasibility and certificate checks.
 
 ## Verification
 

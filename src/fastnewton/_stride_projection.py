@@ -19,7 +19,9 @@ class EuclideanProjector:
         corr_col = torch.zeros_like(x)
         corr_nonneg = torch.zeros_like(x)
         target = torch.as_tensor(marginal, dtype=x.dtype, device=x.device)
-        for _ in range(max(int(max_iter), 1)):
+        iterations = 0
+        for iteration in range(max(int(max_iter), 1)):
+            iterations = iteration + 1
             y = x + corr_row
             x_next = y + ((target - y.sum(dim=1)) / float(n))[:, None]
             corr_row = y - x_next
@@ -37,7 +39,7 @@ class EuclideanProjector:
             )
             if residual <= tol:
                 break
-        return x
+        return x, iterations
 
     @staticmethod
     @torch.no_grad()
@@ -184,30 +186,6 @@ class EuclideanProjector:
         globalization guard; primal feasibility remains the final certificate.
         """
         return 0.5 * plan.square().sum() + target * (u.sum() + v.sum())
-
-    @staticmethod
-    @torch.no_grad()
-    def record_diagnostics(stats, transport, marginal):
-        """Record primal feasibility without changing the solver path."""
-        row_residual = (transport.sum(dim=1) - marginal).abs().amax()
-        col_residual = (transport.sum(dim=0) - marginal).abs().amax()
-        total_mass_error = (transport.sum() - 1.0).abs()
-        stats["min_transport"] = min(
-            stats.get("min_transport", float("inf")),
-            float(transport.amin().detach().cpu()),
-        )
-        stats["max_row_residual"] = max(
-            stats.get("max_row_residual", 0.0),
-            float(row_residual.detach().cpu()),
-        )
-        stats["max_col_residual"] = max(
-            stats.get("max_col_residual", 0.0),
-            float(col_residual.detach().cpu()),
-        )
-        stats["total_mass_error"] = max(
-            stats.get("total_mass_error", 0.0),
-            float(total_mass_error.detach().cpu()),
-        )
 
     @staticmethod
     @torch.no_grad()
@@ -549,7 +527,7 @@ class EuclideanProjector:
                     retry_stats["ridge_used"] = retry_ridge
                     return retry_plan, retry_stats
 
-        fallback = EuclideanProjector._fallback_projection(
+        fallback, fallback_iterations = EuclideanProjector._fallback_projection(
             matrix, target, fallback_iters, tol
         )
         fallback_residual = torch.maximum(
@@ -566,14 +544,14 @@ class EuclideanProjector:
         if not torch.isfinite(fallback_residual) or fallback_residual > tol:
             safe = torch.full_like(matrix, float(marginal) / float(n))
             return safe, {
-                "solver": "projection_failure", "iterations": int(max_iter),
+                "solver": "projection_failure", "iterations": int(fallback_iterations),
                 "relative_residual": float((fallback_residual / target).detach().cpu()),
                 "warm_started": warm_started,
                 "active_fraction": float((fallback > 0.0).to(dtype=x.dtype).mean().detach().cpu()),
                 "active_state": (fallback > 0.0).detach(),
             }
         return fallback, {
-            "solver": "fallback", "iterations": int(max_iter),
+            "solver": "fallback", "iterations": int(fallback_iterations),
             "relative_residual": float((fallback_residual / target).detach().cpu()),
             "warm_started": warm_started,
             "active_fraction": float((fallback > 0.0).to(dtype=x.dtype).mean().detach().cpu()),

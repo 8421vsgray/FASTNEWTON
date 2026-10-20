@@ -119,10 +119,10 @@ def run_fast_sequence(ds, dt, marginal, *, warm_start=False):
             (plan, info), elapsed = timed(lambda: fast_project(x, marginal))
         records.append(summarize_fast(plan, info, x, marginal, elapsed))
         plans.append(plan.detach().clone())
-        if not info.get("success", False):
+        if not info.get("success", False) or info.get("status") == "failed":
             break
         transport = plan
-        previous = {"info": info}
+        previous = {"info": info} if info.get("status") != "failed" else None
     return records, xs, plans
 
 
@@ -154,7 +154,7 @@ def run_fixed_inputs_fast(xs, marginal, *, warm_start=False):
             (plan, info), elapsed = timed(lambda: fast_project(x, marginal))
         records.append(summarize_fast(plan, info, x, marginal, elapsed))
         plans.append(plan.detach().clone())
-        previous = {"info": info}
+        previous = {"info": info} if info.get("status") != "failed" else None
     return records, plans
 
 

@@ -14,6 +14,11 @@ class ProjectionFailure(RuntimeError):
     """Raised when the baseline solver returns an uncertified failure."""
 
 
+def _default_certificate_tolerance(size: int, relative_tol: float) -> float:
+    """Convert the public relative marginal tolerance to an absolute scale."""
+    return abs(1.0 / float(size)) * float(relative_tol)
+
+
 def project(
     matrix: torch.Tensor,
     *,
@@ -44,7 +49,9 @@ def project(
         raise ValueError("relative_tol must be positive")
 
     n = matrix.shape[0]
-    default_certificate_tolerance = max(1.0e-6, abs(1.0 / float(n)) * float(relative_tol))
+    if n < 1:
+        raise ValueError("matrix must be non-empty")
+    default_certificate_tolerance = _default_certificate_tolerance(n, relative_tol)
     certificate_tolerance = float(
         solver_options.pop("certificate_tolerance", default_certificate_tolerance)
     )
@@ -60,15 +67,34 @@ def project(
     info = dict(info)
     solver = info.get("solver")
     failed = solver == "projection_failure"
+    sparse_schur = bool(solver_options.get("sparse_schur", False))
     certificate = primal_dual_certificate(
         matrix, transport, info.get("dual_state"), tolerance=certificate_tolerance
     )
+    feasibility_verified = bool(
+        certificate["certificate_row_residual"] <= certificate_tolerance
+        and certificate["certificate_col_residual"] <= certificate_tolerance
+        and certificate["certificate_min_transport"] >= -certificate_tolerance
+    )
+    certificate_verified = bool(certificate["certificate_verified"])
+    if failed or not feasibility_verified:
+        status = "failed"
+        success = False
+    elif certificate_verified:
+        status = "verified"
+        success = True
+    else:
+        status = "feasible_only"
+        success = True
     info.update(
         {
-            "status": "failed" if failed else "solved",
-            "success": not failed,
-            "feasibility_verified": not failed,
+            "status": status,
+            "success": success,
+            "feasibility_verified": feasibility_verified,
             "optimality_status": certificate["certificate_status"],
+            "optimality_verified": certificate_verified,
+            "certificate_tolerance": certificate_tolerance,
+            "solver_path": "experimental_sparse_schur" if sparse_schur else "dense_schur",
             "autograd_supported": False,
         }
     )
