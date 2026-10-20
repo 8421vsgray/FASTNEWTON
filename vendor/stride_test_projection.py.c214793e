@@ -1,0 +1,52 @@
+"""Numerical smoke tests for STRIDE's Euclidean transport projector."""
+
+import sys
+from pathlib import Path
+
+import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from model import OursModel
+
+
+def check_projection(size, device):
+    torch.manual_seed(7 + size)
+    candidate = torch.randn(size, size, device=device, dtype=torch.float32)
+    marginal = 1.0 / size
+    projected, stats = OursModel._euclidean_bistochastic_projection(
+        candidate,
+        marginal,
+        max_iter=80,
+        relative_tol=1.0e-4,
+        schur_ridge=1.0e-6,
+        fallback_dykstra_iters=500,
+    )
+    row_error = (projected.sum(1) - marginal).abs().amax()
+    col_error = (projected.sum(0) - marginal).abs().amax()
+    assert projected.amin() >= -1.0e-6, projected.amin().item()
+    assert row_error <= 5.0e-4 * marginal, row_error.item()
+    assert col_error <= 5.0e-4 * marginal, col_error.item()
+    repeated, _ = OursModel._euclidean_bistochastic_projection(
+        projected,
+        marginal,
+        max_iter=80,
+        relative_tol=1.0e-4,
+        schur_ridge=1.0e-6,
+        fallback_dykstra_iters=500,
+    )
+    idempotence_error = (repeated - projected).abs().amax()
+    assert idempotence_error <= 1.0e-4, idempotence_error.item()
+    print({
+        "size": size,
+        "solver": stats["solver"],
+        "row_error": row_error.item(),
+        "col_error": col_error.item(),
+        "idempotence_error": idempotence_error.item(),
+    })
+
+
+if __name__ == "__main__":
+    runtime_device = "cuda" if torch.cuda.is_available() else "cpu"
+    for matrix_size in (8, 32, 64):
+        check_projection(matrix_size, runtime_device)
+    print("STRIDE projection smoke test passed")
