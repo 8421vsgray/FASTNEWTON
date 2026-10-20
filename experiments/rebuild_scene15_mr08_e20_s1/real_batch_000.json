@@ -1,0 +1,48 @@
+{
+  "source": "REBUILD",
+  "rebuild_commit": "45fd5c25b75035435ed0bb8cdfe47f6c54b967d8",
+  "dataset": "Scene15",
+  "dataset_file": "/home/dingyn/code/REBUILD/dataset/Scene_15.mat",
+  "m_ratio": 0.8,
+  "seed": 1,
+  "epochs": 20,
+  "start_rectify_epoch": 20,
+  "batch_size": 512,
+  "dtype": "float32",
+  "device": "cuda:0",
+  "feature_shapes": {
+    "p": [
+      [
+        512,
+        128
+      ],
+      [
+        512,
+        128
+      ]
+    ],
+    "z_t": [
+      [
+        512,
+        128
+      ],
+      [
+        512,
+        128
+      ]
+    ]
+  },
+  "tensor_sha256": {
+    "p": [
+      "ea27b75de80adae2a97efc995198d36fc1e7e00c2e2c9fd3bd0352c2ec0631ae",
+      "0af132b7c7c379027f325ad65909f2799e3b830122857bea91499806df42bd22"
+    ],
+    "z_t": [
+      "889713e256c45bd0d06da5c69030bf268741599b8975d25a0511510aecf69ccf",
+      "144200dab7c38d03e1c835fc6630d3aa3cecc0cd906d4759f16aac50e808ce88"
+    ]
+  },
+  "artifact": "/home/dingyn/code/FASTNEWTON/experiments/rebuild_scene15_mr08_e20_s1/real_batch_000.pt",
+  "training_log": "/home/dingyn/code/FASTNEWTON/experiments/rebuild_scene15_mr08_e20_s1/train.log",
+  "train_state_available": true
+}
