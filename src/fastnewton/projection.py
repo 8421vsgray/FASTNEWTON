@@ -43,10 +43,13 @@ def project(
     if not isinstance(relative_tol, (int, float)) or relative_tol <= 0:
         raise ValueError("relative_tol must be positive")
 
-    certificate_tolerance = float(solver_options.pop("certificate_tolerance", 1.0e-6))
+    n = matrix.shape[0]
+    default_certificate_tolerance = max(1.0e-6, abs(1.0 / float(n)) * float(relative_tol))
+    certificate_tolerance = float(
+        solver_options.pop("certificate_tolerance", default_certificate_tolerance)
+    )
     if certificate_tolerance <= 0:
         raise ValueError("certificate_tolerance must be positive")
-    n = matrix.shape[0]
     transport, info = EuclideanProjector.project(
         matrix,
         1.0 / float(n),

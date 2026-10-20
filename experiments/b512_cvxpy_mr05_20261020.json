@@ -8,7 +8,7 @@
     "min": 0.0,
     "objective": 4248.467478257017,
     "row_residual": 1.956698855430563e-06,
-    "seconds": 19.947886776179075,
+    "seconds": 19.963155206292868,
     "solver": "OSQP",
     "status": "optimal"
   },
@@ -62,7 +62,7 @@
     "objective_rel_gap": 7.857651667000504e-09,
     "relative_tol": 0.001,
     "row_residual": 4.646999523889514e-07,
-    "seconds": 0.07834365777671337
+    "seconds": 0.07935925759375095
   },
   "mr": 0.5,
   "seed": 20261020,
