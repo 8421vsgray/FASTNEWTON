@@ -5,4 +5,5 @@ __pycache__/
 .venv/
 dist/
 build/
-experiments/*.pt
+experiments/**/*.pt
+experiments/**/*.log
