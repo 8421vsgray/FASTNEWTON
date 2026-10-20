@@ -21,15 +21,23 @@ python -m pip install -e .
 import torch
 from fastnewton import project
 
-X = torch.randn(512, 512, device="cuda")
-T, info = project(X, relative_tol=1e-3, max_iter=50, return_info=True)
-if not info["success"]:
+B = 8
+X = torch.eye(B, dtype=torch.float64)
+T, info = project(X, relative_tol=1e-8, max_iter=50, return_info=True)
+if info["status"] != "verified":
     raise RuntimeError(info)
 ```
 
-The input is not modified. The output stays on the input device. CPU and CUDA
-are supported when the installed PyTorch build supports them. Autograd is not
-supported in this first extraction (`info["autograd_supported"]` is false).
+This small diagonal example is a deterministic smoke test and runs on CPU.
+The input is not modified and the output stays on the input device. CPU and
+CUDA are supported when the installed PyTorch build supports them. Autograd is
+not supported in this first extraction (`info["autograd_supported"]` is false).
+
+A dense random `B=512` matrix is a stress case, not a reliable first example:
+depending on dtype, tolerance, ridge settings, and the active-set geometry it
+may return `feasible_only` or `failed`. Such cases should be treated as solver
+diagnostics rather than hidden by a fallback or presented as a certified
+projection.
 
 The public status has three values: `verified` means feasibility and the
 primal--dual certificate both passed, `feasible_only` means the returned plan
@@ -47,6 +55,12 @@ The optional `sparse_schur=True` path is explicitly reported as
 post-solve feasibility and certificate checks.
 
 ## Verification
+
+The required runtime dependency is PyTorch. CVXPY and OSQP are optional
+reference-test dependencies; when unavailable, the CVXPY comparison tests are
+skipped rather than becoming runtime requirements. CUDA is needed only for GPU
+benchmarks. The real STRIDE workload harness additionally depends on the
+separate REBUILD environment and is not part of the minimal installation.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -75,6 +89,14 @@ check, not a strict mathematical proof. In particular, a tiny negative gap can
 occur when the returned plan is only approximately marginal-feasible; it is
 accepted only within the configured tolerance and must be interpreted with the
 reported feasibility residuals.
+
+The public `relative_tol` is applied to the uniform marginal `1 / B`; the
+default absolute certificate scale is therefore `relative_tol / B`. A
+`verified` result has both feasibility and the available primal--dual
+certificate within that scale. `feasible_only` is useful for diagnosing a
+feasible plan but is not an optimality claim, while `failed` must not be used
+as a projection. Callers that require the Euclidean optimum should explicitly
+require `status == "verified"`.
 
 The synthetic CUDA benchmark can be reproduced with:
 
