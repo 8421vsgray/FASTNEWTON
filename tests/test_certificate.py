@@ -47,17 +47,33 @@ class CertificateTests(unittest.TestCase):
         x = torch.tensor(
             [[10000.5, 9999.5], [9999.5, 10000.5]], dtype=torch.float32
         )
-        transport = torch.tensor([[0.5, 0.0], [0.0, 0.5]], dtype=torch.float32)
+        diagonal_mass = torch.tensor(0.4999, dtype=torch.float32)
+        off_diagonal_mass = 0.5 - diagonal_mass
+        transport = torch.stack(
+            (
+                torch.stack((diagonal_mass, off_diagonal_mass)),
+                torch.stack((off_diagonal_mass, diagonal_mass)),
+            )
+        )
         dual = (
             torch.full((2,), 5000.0, dtype=torch.float32),
             torch.full((2,), 5000.0, dtype=torch.float32),
         )
 
+        dual_transport32 = (x - dual[0][:, None] - dual[1][None, :]).clamp_min(0.0)
+        primal32 = 0.5 * (transport - x).square().sum()
+        dual_lower_bound32 = (
+            0.5 * x.square().sum()
+            - 0.5 * dual_transport32.square().sum()
+            - 0.5 * (dual[0].sum() + dual[1].sum())
+        )
+        old_float32_gap = primal32 - dual_lower_bound32
         certificate = primal_dual_certificate(x, transport, dual, tolerance=1.0e-6)
+        expected_gap = float(off_diagonal_mass) + 2.0 * float(off_diagonal_mass) ** 2
 
-        self.assertTrue(certificate["certificate_verified"], certificate)
-        self.assertEqual(certificate["primal_dual_gap"], 0.0)
-        self.assertEqual(certificate["dual_projection_residual"], 0.0)
+        self.assertEqual(float(old_float32_gap), 0.0)
+        self.assertAlmostEqual(certificate["primal_dual_gap"], expected_gap, places=12)
+        self.assertFalse(certificate["certificate_verified"])
 
     def test_certificate_reports_marginals_in_float64(self):
         transport = torch.full((512, 512), 1.0 / (512 * 512), dtype=torch.float32)
