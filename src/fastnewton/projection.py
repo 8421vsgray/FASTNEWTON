@@ -33,7 +33,9 @@ def project(
     The extracted STRIDE algorithm is used without changing its numerical
     path.  This wrapper derives the marginal as ``1 / B`` and adds explicit
     input and failure-state validation.  The operation is intentionally
-    non-differentiable in this first release.
+    non-differentiable in this first release. A failed result raises by
+    default when diagnostics are not requested. With ``return_info=True``, a
+    failed result is returned for inspection unless ``raise_on_failure=True``.
     """
     if not isinstance(matrix, torch.Tensor):
         raise TypeError("matrix must be a torch.Tensor")
@@ -99,16 +101,13 @@ def project(
         }
     )
     info.update(certificate)
-    if failed and raise_on_failure:
+    if status == "failed" and (raise_on_failure or not return_info):
         raise ProjectionFailure(
-            "FASTNEWTON baseline returned projection_failure; uniform output "
-            "is not reported as a successful projection"
+            "FASTNEWTON projection failed: "
+            f"solver={solver}, "
+            f"feasibility_verified={feasibility_verified}, "
+            f"certificate_status={certificate['certificate_status']}"
         )
     if return_info:
         return transport, info
-    if failed:
-        raise ProjectionFailure(
-            "FASTNEWTON baseline returned projection_failure; pass "
-            "return_info=True to inspect the failure state"
-        )
     return transport

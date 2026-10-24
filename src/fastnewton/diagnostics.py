@@ -85,7 +85,12 @@ def primal_dual_certificate(
     if matrix.shape != transport.shape or matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("matrix and transport must be square tensors of equal shape")
     n = matrix.shape[0]
-    target = matrix.new_tensor(1.0 / float(n))
+    x64 = matrix.detach().to(dtype=torch.float64)
+    t64 = transport.detach().to(dtype=torch.float64)
+    marginal = 1.0 / float(n)
+    target64 = x64.new_tensor(marginal)
+    row_deficit = target64 - t64.sum(dim=1)
+    col_deficit = target64 - t64.sum(dim=0)
     result = {
         "certificate_status": "unavailable",
         "certificate_verified": False,
@@ -94,9 +99,9 @@ def primal_dual_certificate(
         "primal_dual_gap": float("nan"),
         "relative_primal_dual_gap": float("nan"),
         "dual_projection_residual": float("inf"),
-        "certificate_row_residual": float((transport.sum(1) - target).abs().amax().cpu()),
-        "certificate_col_residual": float((transport.sum(0) - target).abs().amax().cpu()),
-        "certificate_min_transport": float(transport.amin().cpu()),
+        "certificate_row_residual": float(row_deficit.abs().amax().cpu()),
+        "certificate_col_residual": float(col_deficit.abs().amax().cpu()),
+        "certificate_min_transport": float(t64.amin().cpu()),
     }
     if not isinstance(dual_state, (tuple, list)) or len(dual_state) != 2:
         return result
@@ -105,22 +110,25 @@ def primal_dual_certificate(
         return result
     if not bool(torch.isfinite(u).all() and torch.isfinite(v).all()):
         return result
-    u = u.to(dtype=matrix.dtype)
-    v = v.to(dtype=matrix.dtype)
-    dual_transport = (matrix - u[:, None] - v[None, :]).clamp_min(0.0)
-    primal_objective = 0.5 * (transport - matrix).square().sum()
-    dual_lower_bound = (
-        0.5 * matrix.square().sum()
-        - 0.5 * dual_transport.square().sum()
-        - target * (u.sum() + v.sum())
+    u64 = u.detach().to(dtype=torch.float64)
+    v64 = v.detach().to(dtype=torch.float64)
+    z = x64 - u64[:, None] - v64[None, :]
+    dual_transport = z.clamp_min(0.0)
+    inactive_slack = (-z).clamp_min(0.0)
+    primal_objective = 0.5 * (t64 - x64).square().sum()
+    gap = (
+        0.5 * (t64 - dual_transport).square().sum()
+        + (t64 * inactive_slack).sum()
+        + torch.dot(row_deficit, u64)
+        + torch.dot(col_deficit, v64)
     )
-    gap = primal_objective - dual_lower_bound
+    dual_lower_bound = primal_objective - gap
     primal_feasible = bool(
         result["certificate_row_residual"] <= tolerance
         and result["certificate_col_residual"] <= tolerance
         and result["certificate_min_transport"] >= -tolerance
     )
-    dual_projection_residual = (transport - dual_transport).abs().amax()
+    dual_projection_residual = (t64 - dual_transport).abs().amax()
     gap_value = float(gap.cpu())
     result.update(
         {
