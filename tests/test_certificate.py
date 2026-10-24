@@ -1,3 +1,4 @@
+import math
 import unittest
 
 import torch
@@ -19,6 +20,53 @@ class CertificateTests(unittest.TestCase):
         self.assertTrue(certificate["certificate_verified"], certificate)
         self.assertLessEqual(abs(certificate["primal_dual_gap"]), 1.0e-6)
         self.assertEqual(info["optimality_status"], "verified")
+
+    def test_stable_gap_matches_direct_float64_reference(self):
+        torch.manual_seed(812)
+        x = torch.randn(6, 6, dtype=torch.float64)
+        transport, info = project(x, relative_tol=1.0e-10, max_iter=100, return_info=True)
+        u, v = info["dual_state"]
+        certificate = primal_dual_certificate(x, transport, (u, v), tolerance=1.0e-8)
+
+        z = x - u[:, None] - v[None, :]
+        dual_transport = z.clamp_min(0.0)
+        primal = 0.5 * (transport - x).square().sum()
+        dual = (
+            0.5 * x.square().sum()
+            - 0.5 * dual_transport.square().sum()
+            - (u.sum() + v.sum()) / x.shape[0]
+        )
+        direct_gap = primal - dual
+
+        self.assertAlmostEqual(certificate["primal_dual_gap"], float(direct_gap), places=12)
+        self.assertAlmostEqual(
+            certificate["dual_lower_bound"], float(dual), places=10
+        )
+
+    def test_float32_large_objective_avoids_cancellation_in_gap(self):
+        x = torch.tensor(
+            [[10000.5, 9999.5], [9999.5, 10000.5]], dtype=torch.float32
+        )
+        transport = torch.tensor([[0.5, 0.0], [0.0, 0.5]], dtype=torch.float32)
+        dual = (
+            torch.full((2,), 5000.0, dtype=torch.float32),
+            torch.full((2,), 5000.0, dtype=torch.float32),
+        )
+
+        certificate = primal_dual_certificate(x, transport, dual, tolerance=1.0e-6)
+
+        self.assertTrue(certificate["certificate_verified"], certificate)
+        self.assertEqual(certificate["primal_dual_gap"], 0.0)
+        self.assertEqual(certificate["dual_projection_residual"], 0.0)
+
+    def test_certificate_reports_marginals_in_float64(self):
+        transport = torch.full((512, 512), 1.0 / (512 * 512), dtype=torch.float32)
+        x = torch.zeros_like(transport)
+        certificate = primal_dual_certificate(x, transport, None)
+
+        self.assertLessEqual(certificate["certificate_row_residual"], 1.0e-10)
+        self.assertLessEqual(certificate["certificate_col_residual"], 1.0e-10)
+        self.assertTrue(math.isnan(certificate["primal_dual_gap"]))
 
     def test_support_diagnostic_can_remain_conservative(self):
         torch.manual_seed(704)
