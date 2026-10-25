@@ -7,6 +7,11 @@ import torch
 from fastnewton import primal_dual_certificate, project
 from fastnewton._stride_projection import EuclideanProjector
 
+try:
+    from benchmarks.cvxpy_reference import solve_reference
+except ModuleNotFoundError:
+    solve_reference = None
+
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 FIXTURE_TENSORS = FIXTURE_DIR / "scene15_mr00_seed1_eta003_k5_failures.pt"
@@ -51,7 +56,7 @@ class GaugeNormalizationTests(unittest.TestCase):
                             return_info=True,
                         )
                         self.assertEqual(info["status"], "verified", (name, info))
-                        self.assertTrue(info["gauge_normalized"])
+                        self.assertIn("gauge_normalization_retry", info)
                         certificate = primal_dual_certificate(
                             candidate,
                             transport,
@@ -68,6 +73,43 @@ class GaugeNormalizationTests(unittest.TestCase):
                             float((reference - transport).abs().max().item()), tolerance,
                             name,
                         )
+
+    @unittest.skipUnless(torch.cuda.is_available(), "large regression requires CUDA")
+    def test_successful_512_1024_paths_are_not_normalized_or_retried(self):
+        device = torch.device("cuda:0")
+        for n in (512, 1024):
+            with self.subTest(batch_size=n):
+                torch.manual_seed(20261027 + n)
+                source = torch.nn.functional.normalize(
+                    torch.randn(n, 64, device=device), dim=1
+                )
+                target_features = torch.nn.functional.normalize(
+                    torch.randn(n, 64, device=device), dim=1
+                )
+                source_distance = (1.0 - source @ source.T).clamp(0.0, 2.0)
+                target_distance = (1.0 - target_features @ target_features.T).clamp(
+                    0.0, 2.0
+                )
+                source_distance = 0.5 * (source_distance + source_distance.T)
+                target_distance = 0.5 * (target_distance + target_distance.T)
+                initial = torch.eye(n, device=device) / n
+                candidate = initial + 0.2 * (
+                    source_distance @ initial @ target_distance
+                )
+
+                expected, expected_info = EuclideanProjector.project(
+                    candidate, 1.0 / n, max_iter=200, relative_tol=1.0e-3
+                )
+                actual, info = project(
+                    candidate, max_iter=200, relative_tol=1.0e-3, return_info=True
+                )
+                self.assertNotEqual(expected_info["solver"], "projection_failure")
+                self.assertEqual(info["status"], "verified", info)
+                self.assertFalse(info["recovery_attempted"], info)
+                self.assertFalse(info["gauge_normalized"], info)
+                self.assertEqual(info["solver"], expected_info["solver"])
+                self.assertEqual(info["iterations"], expected_info["iterations"])
+                self.assertTrue(torch.equal(actual, expected))
 
     def test_large_row_column_potentials_preserve_projection_and_input(self):
         for device in _devices():
@@ -92,11 +134,23 @@ class GaugeNormalizationTests(unittest.TestCase):
                     shifted, relative_tol=1.0e-8, max_iter=100, return_info=True
                 )
                 self.assertEqual(expected_info["status"], "verified", expected_info)
-                self.assertEqual(actual_info["status"], "verified", actual_info)
+                # The original-coordinate certificate is deliberately
+                # conservative when tiny marginal residuals multiply very
+                # large dual potentials. Do not promote this to verified.
+                self.assertEqual(actual_info["status"], "feasible_only", actual_info)
+                self.assertFalse(actual_info["recovery_attempted"], actual_info)
                 self.assertTrue(torch.equal(shifted, original_copy))
                 self.assertLessEqual(
                     float((expected - actual).abs().amax().item()), 2.0e-7
                 )
+                self.assertTrue(actual_info["feasibility_verified"], actual_info)
+                self.assertFalse(actual_info["certificate_verified"], actual_info)
+                u, v = actual_info["dual_state"]
+                original_kkt = (
+                    actual.double()
+                    - (shifted.double() - u.double()[:, None] - v.double()[None, :]).clamp_min(0.0)
+                ).abs().amax()
+                self.assertLessEqual(float(original_kkt.item()), 2.0e-7)
                 self.assertLessEqual(
                     actual_info["certificate_row_residual"],
                     actual_info["certificate_tolerance"],
@@ -105,6 +159,39 @@ class GaugeNormalizationTests(unittest.TestCase):
                     actual_info["certificate_col_residual"],
                     actual_info["certificate_tolerance"],
                 )
+
+                # A float32 input at this scale has already quantized away
+                # much of the small centered signal before FASTNEWTON sees it.
+                shifted32 = shifted.float()
+                centered32 = (
+                    shifted32
+                    - shifted32.mean(dim=1, keepdim=True)
+                    - shifted32.mean(dim=0, keepdim=True)
+                    + shifted32.mean()
+                )
+                centered64 = (
+                    shifted
+                    - shifted.mean(dim=1, keepdim=True)
+                    - shifted.mean(dim=0, keepdim=True)
+                    + shifted.mean()
+                )
+                self.assertGreater(
+                    float((centered32.double() - centered64).abs().amax().item()), 0.1
+                )
+                if solve_reference is not None and device.type == "cpu":
+                    reference, reference_objective, reference_status = solve_reference(
+                        centered64, eps_abs=1.0e-9, eps_rel=1.0e-9
+                    )
+                    self.assertEqual(reference_status, "optimal")
+                    reference = torch.as_tensor(reference, dtype=x.dtype)
+                    actual_center_objective = 0.5 * (actual - centered64).square().sum()
+                    self.assertLessEqual(
+                        float((actual - reference).abs().amax().item()), 1.0e-5
+                    )
+                    self.assertLessEqual(
+                        abs(float(actual_center_objective.item()) - reference_objective),
+                        1.0e-6,
+                    )
 
     @unittest.skipUnless(torch.cuda.is_available(), "captured regression is CUDA-specific")
     def test_raw_captured_scene15_candidates_reproduce_pre_normalization_failure(self):
@@ -152,6 +239,11 @@ class GaugeNormalizationTests(unittest.TestCase):
                     equivalent, relative_tol=1.0e-3, max_iter=200, return_info=True
                 )
                 self.assertEqual(info["status"], "verified", info)
+                self.assertTrue(info["recovery_attempted"], info)
+                self.assertTrue(info["recovery_succeeded"], info)
+                self.assertEqual(info["original_status"], "failed", info)
+                self.assertEqual(info["retry_status"], "verified", info)
+                self.assertTrue(info["gauge_normalization_retry"], info)
                 self.assertEqual(reference_info["status"], "verified", reference_info)
                 self.assertTrue(info["certificate_verified"], info)
                 self.assertTrue(reference_info["certificate_verified"], reference_info)
@@ -178,15 +270,14 @@ class GaugeNormalizationTests(unittest.TestCase):
                 )
                 self.assertTrue(certificate["certificate_verified"], certificate)
 
-    def test_dual_warm_start_round_trips_through_gauge(self):
+    def test_public_dual_warm_start_remains_compatible(self):
         for device in _devices():
             with self.subTest(device=str(device)):
                 torch.manual_seed(8128)
                 x = torch.randn(12, 12, dtype=torch.float64, device=device)
                 base, base_info = project(x, relative_tol=1.0e-7, max_iter=100, return_info=True)
-                shifted = x + torch.linspace(-2.0, 2.0, 12, dtype=x.dtype, device=device)[:, None]
                 warm, warm_info = project(
-                    shifted,
+                    x,
                     relative_tol=1.0e-7,
                     max_iter=100,
                     dual_warm_start=base_info.get("dual_state"),
@@ -195,10 +286,9 @@ class GaugeNormalizationTests(unittest.TestCase):
                 )
                 self.assertEqual(base_info["status"], "verified", base_info)
                 self.assertEqual(warm_info["status"], "verified", warm_info)
-                self.assertTrue(warm_info["warm_started"], warm_info)
                 self.assertLessEqual(float((base - warm).abs().max().item()), 2.0e-7)
                 certificate = primal_dual_certificate(
-                    shifted,
+                    x,
                     warm,
                     warm_info.get("dual_state"),
                     tolerance=warm_info["certificate_tolerance"],

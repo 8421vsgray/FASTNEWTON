@@ -76,12 +76,14 @@ occur when the returned plan is only approximately marginal-feasible; it is
 accepted only within the configured tolerance and must be interpreted with the
 reported feasibility residuals.
 
-The public projection API removes row and column potentials from each input via
-double-centering before the Newton solve. For fixed uniform marginals, this is
-an objective-preserving gauge transformation: it does not change the exact
-primal projection. Public dual warm-start state is converted between the
-centered solver coordinates and the caller's original input coordinates, and
-the optimality certificate is evaluated against the original input.
+The public API first preserves the original input and Newton path. If that path
+has final status `failed`, it retries once after double-centering
+the input to remove row and column potentials. For fixed uniform marginals,
+this gauge transformation preserves the exact primal projection. The retry
+clears warm-start state, maps its dual potentials back to the original input
+coordinates, and evaluates feasibility and the optimality certificate against
+the original input. Diagnostics expose `recovery_attempted`,
+`recovery_succeeded`, `original_status`, and `retry_status`.
 
 The synthetic CUDA benchmark can be reproduced with:
 
