@@ -19,6 +19,57 @@ def _default_certificate_tolerance(size: int, relative_tol: float) -> float:
     return abs(1.0 / float(size)) * float(relative_tol)
 
 
+@torch.no_grad()
+def _gauge_normalize_uniform_transport_matrix(
+    matrix: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Remove row and column potentials without changing the uniform projection.
+
+    For fixed row and column marginals, adding any row/column potential to the
+    candidate changes the quadratic objective by a constant over the feasible
+    set.  Removing those components gives the solver a better-scaled, doubly
+    centered matrix while preserving its exact Euclidean projection.
+    """
+    row_mean = matrix.mean(dim=1, keepdim=True)
+    col_mean = matrix.mean(dim=0, keepdim=True)
+    global_mean = matrix.mean()
+    centered = matrix - row_mean - col_mean + global_mean
+    return centered, row_mean, col_mean, global_mean
+
+
+def _transform_dual_state(
+    dual_state,
+    row_mean: torch.Tensor,
+    col_mean: torch.Tensor,
+    global_mean: torch.Tensor,
+    *,
+    to_centered: bool,
+):
+    """Convert public-coordinate dual potentials to/from the centered gauge."""
+    if not isinstance(dual_state, (tuple, list)) or len(dual_state) != 2:
+        return dual_state
+    u, v = dual_state
+    n = row_mean.shape[0]
+    if (
+        not torch.is_tensor(u)
+        or not torch.is_tensor(v)
+        or tuple(u.shape) != (n,)
+        or tuple(v.shape) != (n,)
+        or u.device != row_mean.device
+        or v.device != col_mean.device
+    ):
+        return dual_state
+    u = u.to(dtype=row_mean.dtype)
+    v = v.to(dtype=col_mean.dtype)
+    row = row_mean[:, 0]
+    col = col_mean[0, :]
+    if to_centered:
+        # Xc = X - row - col + global, so uc=u-row+global and vc=v-col.
+        return u - row + global_mean, v - col
+    # Convert the solver's centered duals back to the coordinates of X.
+    return u + row - global_mean, v + col
+
+
 def project(
     matrix: torch.Tensor,
     *,
@@ -59,19 +110,43 @@ def project(
     )
     if certificate_tolerance <= 0:
         raise ValueError("certificate_tolerance must be positive")
+    centered_matrix, row_mean, col_mean, global_mean = (
+        _gauge_normalize_uniform_transport_matrix(matrix)
+    )
+    centered_dual_warm_start = _transform_dual_state(
+        solver_options.pop("dual_warm_start", None),
+        row_mean,
+        col_mean,
+        global_mean,
+        to_centered=True,
+    )
+    if centered_dual_warm_start is not None:
+        solver_options["dual_warm_start"] = centered_dual_warm_start
+
     transport, info = EuclideanProjector.project(
-        matrix,
+        centered_matrix,
         1.0 / float(n),
         max_iter=max_iter,
         relative_tol=float(relative_tol),
         **solver_options,
     )
     info = dict(info)
+    centered_dual_state = info.get("dual_state")
+    original_dual_state = _transform_dual_state(
+        centered_dual_state,
+        row_mean,
+        col_mean,
+        global_mean,
+        to_centered=False,
+    )
+    if centered_dual_state is not None:
+        # Keep the public warm-start state in the coordinates of the caller's X.
+        info["dual_state"] = original_dual_state
     solver = info.get("solver")
     failed = solver == "projection_failure"
     sparse_schur = bool(solver_options.get("sparse_schur", False))
     certificate = primal_dual_certificate(
-        matrix, transport, info.get("dual_state"), tolerance=certificate_tolerance
+        matrix, transport, original_dual_state, tolerance=certificate_tolerance
     )
     feasibility_verified = bool(
         certificate["certificate_row_residual"] <= certificate_tolerance
@@ -98,6 +173,7 @@ def project(
             "certificate_tolerance": certificate_tolerance,
             "solver_path": "experimental_sparse_schur" if sparse_schur else "dense_schur",
             "autograd_supported": False,
+            "gauge_normalized": True,
         }
     )
     info.update(certificate)

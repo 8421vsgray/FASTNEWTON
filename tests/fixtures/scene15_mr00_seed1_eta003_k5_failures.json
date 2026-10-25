@@ -1,0 +1,55 @@
+{
+  "description": "Exact GW projection candidate matrices captured from the first three FASTNEWTON failures in a deterministic REBUILD Scene15 run.",
+  "dataset": "Scene15",
+  "mismatch_ratio": 0.0,
+  "seed": 1,
+  "batch_size": 512,
+  "gw_step_size": 0.03,
+  "gw_steps": 5,
+  "solver_backend": "fastnewton",
+  "relative_tol": 0.001,
+  "max_iter": 200,
+  "warm_start": false,
+  "rebuild_commit": "f34fbf452fb2b7e38eb58891680620478363f72a",
+  "fastnewton_commit": "9f39ceb708835a8090d0610c696a52c6c74d3e05",
+  "tensor_fixture": "tests/fixtures/scene15_mr00_seed1_eta003_k5_failures.pt",
+  "cases": [
+    {
+      "failure_index": 1,
+      "epoch": 33,
+      "gw_step": 0,
+      "solver": "projection_failure",
+      "iterations": 100,
+      "relative_residual": 2.490583896636963,
+      "min": 0.11109934002161026,
+      "max": 0.13245056569576263,
+      "mean": 0.11975189298391342,
+      "std": 0.0027294105384498835
+    },
+    {
+      "failure_index": 2,
+      "epoch": 40,
+      "gw_step": 4,
+      "solver": "projection_failure",
+      "iterations": 100,
+      "relative_residual": 2.632448673248291,
+      "min": 0.11301462352275848,
+      "max": 0.13138021528720856,
+      "mean": 0.11977559328079224,
+      "std": 0.00235576881095767
+    },
+    {
+      "failure_index": 3,
+      "epoch": 42,
+      "gw_step": 1,
+      "solver": "projection_failure",
+      "iterations": 100,
+      "relative_residual": 2.5091066360473633,
+      "min": 0.11215335875749588,
+      "max": 0.1314888596534729,
+      "mean": 0.1196809932589531,
+      "std": 0.0024331447202712297
+    }
+  ],
+  "note": "The exact candidate matrices are saved as float32 CPU tensors. The log-only previous diagnostic did not preserve them; these are newly captured from the matching seed/config replay."
+}
