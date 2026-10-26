@@ -237,15 +237,20 @@ class EuclideanProjector:
             - col_error[None, :] / float(n)
             + total_error / float(n * n)
         )
-        affine_residual = torch.maximum(
-            (affine.sum(dim=1) - target).abs().amax(),
-            (affine.sum(dim=0) - target).abs().amax(),
-        )
         tol = target.abs().clamp_min(1.0e-12) * float(relative_tol)
-        if affine.amin() >= -tol and affine_residual <= tol:
-            return affine.clamp_min(0.0), {
+        affine_clamped = affine.clamp_min(0.0)
+        clamped_residual = torch.maximum(
+            (affine_clamped.sum(dim=1) - target).abs().amax(),
+            (affine_clamped.sum(dim=0) - target).abs().amax(),
+        )
+        # The affine projection is the exact transport projection only when
+        # it is already nonnegative.  A clipped point can be feasible within
+        # tolerance yet differ from the Euclidean optimum, so negative affine
+        # entries always continue through Newton.
+        if affine.amin() >= 0.0 and clamped_residual <= tol:
+            return affine_clamped, {
                 "solver": "affine", "iterations": 0,
-                "relative_residual": float((affine_residual / target).detach().cpu()),
+                "relative_residual": float((clamped_residual / target).detach().cpu()),
                 "active_state": (affine > 0.0).detach(),
             }
 
